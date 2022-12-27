@@ -1,5 +1,4 @@
 import pandas as pd
-import datetime
 
 def generate_material_and_jobs(file_production_name="Actual production.XLSX", 
         file_material_name="Routing Timings.XLSX"):
@@ -48,6 +47,5 @@ def generate_cleaning_times(prefered_time="Their prefered sequence.xlsx"):
 
     out_cleaning_times = {v: k for k, v in tempDict['Material'].items()}
     print(out_cleaning_times)
-
 
     return out_cleaning_times
