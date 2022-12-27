@@ -38,3 +38,16 @@ def generate_material_and_jobs(file_production_name="Actual production.XLSX",
     print("Extracted data from csv file ...")
 
     return production, material_info
+
+def generate_cleaning_times(prefered_time="Their prefered sequence.xlsx"):
+    cleaning_times = pd.read_excel("data/"+prefered_time)
+
+    cleaning_times = cleaning_times[["Material"]]
+    
+    tempDict = cleaning_times.to_dict()
+
+    out_cleaning_times = {v: k for k, v in tempDict['Material'].items()}
+    print(out_cleaning_times)
+
+
+    return out_cleaning_times
