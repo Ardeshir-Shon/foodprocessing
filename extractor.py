@@ -46,6 +46,5 @@ def generate_cleaning_times(prefered_time="Their prefered sequence.xlsx"):
     tempDict = cleaning_times.to_dict()
 
     out_cleaning_times = {v: k for k, v in tempDict['Material'].items()}
-    print(out_cleaning_times)
 
     return out_cleaning_times
