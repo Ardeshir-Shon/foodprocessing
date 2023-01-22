@@ -15,6 +15,7 @@ changeOverToSameProductP1 = 3
 changeOverToSameProductP2 = 3
 changeOverToSameProductP3 = 3
 
+one_week_in_minutes = 24*7*60
 two_weeks_in_minutes = 24*60*14
 
 changeovers = {}
@@ -32,13 +33,13 @@ def get_changeovertime(preferred_sequence,m1,m2):
         
         return generatedTime
 
-def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, line_current_status, line_current_order, production_filtered, offset_time , material_info):
+def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, line_current_status, line_current_order, line_operation_remaining_time , material_info):
     if line_order_pointer == len(line_sequence):
-        return "off", None, line_order_pointer, 0
+        return "idle", None, line_order_pointer, 0
     else:
         if line_current_status == "idle":
-            line_current_order = line_sequence[line_order_pointer]
             line_order_pointer += 1
+            line_current_order = line_sequence[line_order_pointer]
             line_current_status = "production"
             line_operation_remaining_time = material_info[line_current_order]
             return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
@@ -47,7 +48,6 @@ def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, li
             if line_operation_remaining_time == 0:
                 line_current_status = "changeover"
                 line_operation_remaining_time = get_changeovertime(preferred_sequence, line_current_order, line_sequence[line_order_pointer+1])
-                line_order_pointer += 1
                 return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
             else:
                 return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
@@ -55,14 +55,10 @@ def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, li
             line_operation_remaining_time -= 1
             if line_operation_remaining_time == 0:
                 line_current_status = "idle"
-                return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
-            else:
-                return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
-        elif line_current_status == "off":
             return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
 
 def simulate_production(production_filtered, material_info, preferred_sequence, porposed_sequence):
-    total_changeover_time, unmet_binary_map , week_one_working_hours, week_two_working_hours = 0,0,0,0
+    total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes = 0,[0]*len(porposed_sequence),0,0
 
     offset_time = min(production_filtered.starthour)
     
@@ -70,27 +66,26 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
 
     line_one_sequence = []
     line_two_sequence = []
-    union_sequence = []
     
-    line_one_order_pointer = 0
-    line_two_order_pointer = 0
+    line_one_order_pointer = -1
+    line_two_order_pointer = -1
 
     line_one_current_order = None
     line_two_current_order = None
 
     line_one_current_status = "idle"
-    line_two_current_status = "idle" # idle, changeover, production , off
+    line_two_current_status = "idle" # idle, production , changeover
 
     line_one_operation_remaining_time = 0
     line_two_operation_remaining_time = 0
+    
+    for order in porposed_sequence:
+        if production_filtered.iloc[order]['machine_number'] ==  'P10':
+            line_one_sequence.append(order)
+        elif production_filtered.iloc[order]['machine_number'] ==  'P20':
+            line_two_sequence.append(order)
 
-
-    for index, row in production_filtered.iterrows():
-        if row['machine_number'] ==  'P10':
-            line_one_sequence.append(index)
-        elif row['machine_number'] ==  'P20':
-            line_two_sequence.append(index)
-        union_sequence.append(index)
+    
     
     for time in range(two_weeks_in_minutes):
         # is that day shift or night shift?
@@ -102,14 +97,43 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
             shift = 'day'
         
         # update the status of each line
+        pre_one_status = line_one_current_status
+        pre_two_status = line_two_current_status
         if shift == 'day':
-            if line_one_operation_remaining_time == 0:
-                line_one_current_status, line_one_current_order, 
-                line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, production_filtered, offset_time , material_info)
-            
-        # update changeover time and unmet_binary_map and week_one_working_hours and week_two_working_hours variables
+                line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info)
+                line_two_current_status, line_two_current_order, line_two_order_pointer , line_two_operation_remaining_time = update_line_status(preferred_sequence , line_two_sequence, line_two_order_pointer, line_two_current_status, line_two_current_order, line_two_operation_remaining_time , material_info)
+        
+        if shift == 'night':
+                if porposed_sequence.index(line_one_current_order) > porposed_sequence.index(line_two_current_order):
+                    line_two_current_status, line_two_current_order, line_two_order_pointer , line_two_operation_remaining_time = update_line_status(preferred_sequence , line_two_sequence, line_two_order_pointer, line_two_current_status, line_two_current_order, line_two_operation_remaining_time , material_info)
+                else:
+                    line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info)
+        
+        # update changeover time and unmet_binary_map and week_one_idle_hours and week_two_idle_hours variables
+        if pre_one_status == "production" and line_one_current_status == "changeover":
+            if production_filtered.iloc[line_one_current_order]['endhour'] - offset_time >= time: # order met
+                unmet_binary_map[porposed_sequence.index(line_one_current_order)] = 1
+        if pre_two_status == "production" and line_two_current_status == "changeover":
+            if production_filtered.iloc[line_two_current_order]['endhour'] - offset_time >= time: # order met
+                unmet_binary_map[porposed_sequence.index(line_two_current_order)] = 1
+        
+        if pre_one_status == "changeover" and line_one_current_status == "changeover":
+            total_changeover_time += 1
+        if pre_two_status == "changeover" and line_two_current_status == "changeover":
+            total_changeover_time += 1
+        
+        if line_one_current_status == "idle":
+            if time < one_week_in_minutes:
+                week_one_idle_minutes += 1
+            else:
+                week_two_idle_minutes += 1
+        if line_two_current_status == "idle":
+            if time < one_week_in_minutes:
+                week_one_idle_minutes += 1
+            else:
+                week_two_idle_minutes += 1
 
-    return total_changeover_time, unmet_binary_map , week_one_working_hours, week_two_working_hours
+    return total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes
 
 
 def main():
