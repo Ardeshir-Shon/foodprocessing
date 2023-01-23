@@ -135,6 +135,71 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
 
     return total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes
 
+def calculate_fitness(production_filtered, material_info, preferred_sequence, porposed_sequence):
+    total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes = simulate_production(production_filtered, material_info, preferred_sequence, porposed_sequence)
+    unmet_orders = sum(unmet_binary_map)
+    idle_time = week_one_idle_minutes + week_two_idle_minutes
+    fitness = total_changeover_time + unmet_orders + idle_time
+    return fitness
+
+def generate_random_sequence(production_filtered):
+    line_one_orders = production_filtered[production_filtered['machine_number'] == 'P10'].index.tolist()
+    line_two_orders = production_filtered[production_filtered['machine_number'] == 'P20'].index.tolist()
+    random.shuffle(line_one_orders)
+    random.shuffle(line_two_orders)
+    porposed_sequence = line_one_orders + line_two_orders
+    return porposed_sequence
+
+def generate_random_population(production_filtered, population_size):
+    population = []
+    for i in range(population_size):
+        porposed_sequence = generate_random_sequence(production_filtered)
+        population.append(porposed_sequence)
+    return population
+
+def generate_next_generation(production_filtered, material_info, preferred_sequence, population, population_size, mutation_rate):
+    fitness_map = {}
+    for porposed_sequence in population:
+        fitness_map[tuple(porposed_sequence)] = calculate_fitness(production_filtered, material_info, preferred_sequence, porposed_sequence)
+    sorted_fitness_map = sorted(fitness_map.items(), key=lambda x: x[1])
+    sorted_population = [list(x[0]) for x in sorted_fitness_map]
+    next_generation = sorted_population[:int(population_size*0.2)]
+    for i in range(int(population_size*0.8)):
+        parent1 = random.choice(sorted_population[:int(population_size*0.2)])
+        parent2 = random.choice(sorted_population[:int(population_size*0.2)])
+        child = crossover(parent1, parent2)
+        if random.random() < mutation_rate:
+            child = mutate(child)
+        next_generation.append(child)
+    return next_generation
+
+def crossover(parent1, parent2):
+    child = []
+    for i in range(len(parent1)):
+        if random.random() < 0.5:
+            child.append(parent1[i])
+        else:
+            child.append(parent2[i])
+    return child
+
+def mutate(child):
+    index1 = random.randint(0, len(child)-1)
+    index2 = random.randint(0, len(child)-1)
+    child[index1], child[index2] = child[index2], child[index1]
+    return child
+
+def genetic_algorithm(production_filtered, material_info, preferred_sequence, population_size, mutation_rate, generations):
+    population = generate_random_population(production_filtered, population_size)
+    for i in range(generations):
+        population = generate_next_generation(production_filtered, material_info, preferred_sequence, population, population_size, mutation_rate)
+    fitness_map = {}
+    for porposed_sequence in population:
+        fitness_map[tuple(porposed_sequence)] = calculate_fitness(production_filtered, material_info, preferred_sequence, porposed_sequence)
+    sorted_fitness_map = sorted(fitness_map.items(), key=lambda x: x[1])
+    sorted_population = [list(x[0]) for x in sorted_fitness_map]
+    best_sequence = sorted_population[0]
+    return best_sequence
+
 
 def main():
 
@@ -152,3 +217,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    
