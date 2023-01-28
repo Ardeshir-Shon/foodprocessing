@@ -12,20 +12,35 @@ production = None
 numberOfWeeksAhead = 2
 numberOfHoursAhead = 24*7*numberOfWeeksAhead
 
-changeOverToSameProductP1 = 3
-changeOverToSameProductP2 = 3
-changeOverToSameProductP3 = 3
+# product to the same product changeover is a constant equal to 7 minutes
+# line one and two setup times are 10 minutes and line three is 20 minutes
+# setup time is from a product to the product prime
 
 one_week_in_minutes = 24*7*60
 two_weeks_in_minutes = 24*60*14
 
 changeovers = {}
 
+def get_product_production_line(product, production_filtered):
+    # if product in production_filtered["Material Number"].tolist():
+    #     return production_filtered[production_filtered["Material Number"] == product]["Production Line"].tolist()[0]
+    # else:
+    #     return None
+    if production_filtered[production_filtered["Material Number"]==product]['machine_number'] ==  'P10':
+        return 1
+    elif production_filtered[production_filtered["Material Number"]==product]['machine_number'] ==  'P20':
+        return 2
+    elif production_filtered[production_filtered["Material Number"]==product]['machine_number'] ==  'P30':
+        return 3
 
 #auto cache
 def get_changeovertime(preferred_sequence,m1,m2):
+    
+    setup_time = 10
+    if m1 == m2:
+        return 7
     try:
-        return changeovers[m1][m2]
+        return changeovers[m1][m2] + setup_time
     except:
         try:
             dist = abs(int(preferred_sequence[m1])-int(preferred_sequence[m2]))
@@ -35,7 +50,7 @@ def get_changeovertime(preferred_sequence,m1,m2):
         changeovers[m1] = {m2:generatedTime}
         changeovers[m2] = {m1:generatedTime}
         
-        return generatedTime
+        return setup_time + generatedTime
 
 def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, line_current_status, line_current_order, line_operation_remaining_time , material_info, production_filtered):
     if line_order_pointer == len(line_sequence):
@@ -54,7 +69,6 @@ def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, li
                 line_current_status = "changeover"
                 next_order = line_sequence[line_order_pointer+1]
                 line_operation_remaining_time = get_changeovertime(preferred_sequence, production_filtered.loc[line_current_order]["Material Number"], production_filtered.loc[next_order]["Material Number"])
-                line_operation_remaining_time += changeOverToSameProductP1
                 return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
             else:
                 return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
@@ -150,15 +164,25 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
 def calculate_fitness(production_filtered, material_info, preferred_sequence, porposed_sequence):
     total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes = simulate_production(production_filtered, material_info, preferred_sequence, porposed_sequence)
     unmet_orders = sum(unmet_binary_map)
+    # balance the fitness function between unmet orders and changeover time
+    # find a metric to balance the weeks
     idle_time = week_one_idle_minutes + week_two_idle_minutes
     # TODO: normalize all three contributing criteria on fiteens before the summation
     fitness = total_changeover_time + unmet_orders + idle_time
     return fitness
 
 def generate_random_sequence(production_filtered):
-    orders = production_filtered["Order"].tolist()
-    random.shuffle(orders)
-    return orders
+    # generate a random sequence of orders for different lines then concat lists
+    line_one_sequence = production_filtered[production_filtered['machine_number'] == 'P10']["Order"].tolist()
+    line_two_sequence = production_filtered[production_filtered['machine_number'] == 'P20']["Order"].tolist()
+    random.shuffle(line_one_sequence)
+    random.shuffle(line_two_sequence)
+    porposed_sequence = line_one_sequence + line_two_sequence
+    return porposed_sequence
+
+    # orders = production_filtered["Order"].tolist()
+    # random.shuffle(orders)
+    # return orders
 
 def generate_random_population(production_filtered, population_size):
     population = []
