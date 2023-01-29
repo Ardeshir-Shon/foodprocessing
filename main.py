@@ -1,5 +1,6 @@
 from extractor import *
 import random
+import logging
 
 # TODO: make line an object and have number of lines and variables dynamic
 # TODO: make the changeover time dynamic
@@ -19,13 +20,12 @@ numberOfHoursAhead = 24*7*numberOfWeeksAhead
 one_week_in_minutes = 24*7*60
 two_weeks_in_minutes = 24*60*14
 
+min_total_changeover_time, min_unmet_orders, min_idle_time = None, None, None
+max_total_changeover_time, max_unmet_orders, max_idle_time = None, None, None
+
 changeovers = {}
 
 def get_product_production_line(product, production_filtered):
-    # if product in production_filtered["Material Number"].tolist():
-    #     return production_filtered[production_filtered["Material Number"] == product]["Production Line"].tolist()[0]
-    # else:
-    #     return None
     if production_filtered[production_filtered["Material Number"]==product]['machine_number'] ==  'P10':
         return 1
     elif production_filtered[production_filtered["Material Number"]==product]['machine_number'] ==  'P20':
@@ -82,7 +82,6 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
     total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes = 0,[1]*len(porposed_sequence),0,0
 
     offset_time = min(production_filtered.starthour)
-    
     
     try:
         production_filtered.set_index('Order', inplace=True)
@@ -168,7 +167,31 @@ def calculate_fitness(production_filtered, material_info, preferred_sequence, po
     # find a metric to balance the weeks
     idle_time = week_one_idle_minutes + week_two_idle_minutes
     # TODO: normalize all three contributing criteria on fiteens before the summation
-    fitness = total_changeover_time + unmet_orders + idle_time
+    if min_idle_time == None or min_total_changeover_time == None or min_unmet_orders == None or max_idle_time == None or max_total_changeover_time == None or max_unmet_orders == None:
+            max_idle_time = idle_time
+            max_total_changeover_time = total_changeover_time
+            max_unmet_orders = unmet_orders
+            min_total_changeover_time = total_changeover_time
+            min_unmet_orders = unmet_orders
+            min_idle_time = idle_time
+            # fitness = total_changeover_time + unmet_orders + idle_time
+            return 0
+    # update min and max values in else
+    else:
+        if idle_time < min_idle_time:
+            min_idle_time = idle_time
+        if total_changeover_time < min_total_changeover_time:
+            min_total_changeover_time = total_changeover_time
+        if unmet_orders < min_unmet_orders:
+            min_unmet_orders = unmet_orders
+        if idle_time > max_idle_time:
+            max_idle_time = idle_time
+        if total_changeover_time > max_total_changeover_time:
+            max_total_changeover_time = total_changeover_time
+        if unmet_orders > max_unmet_orders:
+            max_unmet_orders = unmet_orders
+    
+    fitness = (total_changeover_time - min_total_changeover_time)/(max_total_changeover_time - min_total_changeover_time) + (unmet_orders - min_unmet_orders)/(max_unmet_orders - min_unmet_orders) + (idle_time - min_idle_time)/(max_idle_time - min_idle_time)
     return fitness
 
 def generate_random_sequence(production_filtered):
@@ -262,7 +285,10 @@ def get_nth_two_weeks_production(production,n): # n starts from 0
     production_filtered = production_filtered[[(production_filtered['week']==offset_week+n) | (production_filtered['week']==offset_week+n+1)]]
     return production_filtered
 
-
+def fill_the_pool(pool_size,production_filtered,material_info, preferred_sequence):
+    for i in range(pool_size):
+        temp_seq = generate_random_sequence(production_filtered)
+        temp_fitness = calculate_fitness(production_filtered, material_info, preferred_sequence, temp_seq)
 def main():
 
     production, material_info = generate_material_and_jobs()
@@ -270,10 +296,13 @@ def main():
     production_filtered = production[production["year"]==2021]
     production_filtered = production_filtered[(production_filtered["week"]==40) | (production_filtered["week"]==41)]
     preferred_sequence = generate_cleaning_times()
+    
+    pool_size = 100
     population_size = 100
     mutation_rate = 0.1
     generations = 100
 
+    fill_the_pool(pool_size,production_filtered,material_info, preferred_sequence)
     # print(production_filtered[production_filtered['Order']==3827828])
     best_sequence = genetic_algorithm(production_filtered, material_info, preferred_sequence, population_size, mutation_rate, generations)
     # print(best_sequence)
