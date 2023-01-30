@@ -1,11 +1,16 @@
 from extractor import *
 import random
 import logging
+import os
 
 # TODO: make line an object and have number of lines and variables dynamic
 # TODO: make the changeover time dynamic
 # TODO: reduce the computation complexity of the simulation
 # TODO: makke the nth week dynamic not related to the number of years
+
+# if certain file exists, remove it
+os.remove("log.txt") if os.path.exists("log.txt") else None
+f = open("log.txt","a")
 
 material_info = None
 production = None
@@ -81,12 +86,10 @@ def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, li
 def simulate_production(production_filtered, material_info, preferred_sequence, porposed_sequence):
     total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes = 0,[1]*len(porposed_sequence),0,0
 
+    save_line_one_status = None
+    save_line_two_status = None
+
     offset_time = min(production_filtered.starthour)
-    
-    try:
-        production_filtered.set_index('Order', inplace=True)
-    except:
-        pass
 
     line_one_sequence = []
     line_two_sequence = []
@@ -118,22 +121,43 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
             shift = 'night'
         elif time % (24*60) >= 460 and time % (24*60) <= 900:
             shift = 'day'
+        else:
+            shift = 'off'
         
         # update the status of each line
         pre_one_status = line_one_current_status
         pre_two_status = line_two_current_status
         if shift == 'day':
+                if line_one_current_status == "off":
+                    line_one_current_status = save_line_one_status
+                if line_two_current_status == "off":
+                    line_two_current_status = save_line_two_status
                 line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info, production_filtered)
                 line_two_current_status, line_two_current_order, line_two_order_pointer , line_two_operation_remaining_time = update_line_status(preferred_sequence , line_two_sequence, line_two_order_pointer, line_two_current_status, line_two_current_order, line_two_operation_remaining_time , material_info, production_filtered)
         
         if shift == 'night':
+                if line_one_current_status == "off":
+                    line_one_current_status = save_line_one_status
+                if line_two_current_status == "off":
+                    line_two_current_status = save_line_two_status
+                
                 if line_one_current_order == None:
                     line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info, production_filtered)
-                if line_two_current_order == None or porposed_sequence.index(line_one_current_order) > porposed_sequence.index(line_two_current_order):
+                elif line_two_current_order == None or porposed_sequence.index(line_one_current_order) > porposed_sequence.index(line_two_current_order):
                     line_two_current_status, line_two_current_order, line_two_order_pointer , line_two_operation_remaining_time = update_line_status(preferred_sequence , line_two_sequence, line_two_order_pointer, line_two_current_status, line_two_current_order, line_two_operation_remaining_time , material_info, production_filtered)
                 else:
                     line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info, production_filtered)
-        
+                # check may reach first if and last else
+        if shift == 'off':
+            if line_one_current_status != "off":
+                save_line_one_status = line_one_current_status
+                line_one_current_status = "off"
+            if line_two_current_status != "off":
+                save_line_two_status = line_two_current_status
+                line_two_current_status = "off"
+            line_one_current_status = 'off'
+            line_two_current_status = 'off'
+
         # update changeover time and unmet_binary_map and week_one_idle_hours and week_two_idle_hours variables
         if pre_one_status == "production" and line_one_current_status == "changeover":
             if production_filtered.loc[line_one_current_order]['endhour'] - offset_time >= time: # order met
@@ -147,12 +171,12 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
         if pre_two_status == "changeover" and line_two_current_status == "changeover":
             total_changeover_time += 1
         
-        if line_one_current_status == "idle":
+        if line_one_current_status == "idle" or line_one_current_status == "off":
             if time < one_week_in_minutes:
                 week_one_idle_minutes += 1
             else:
                 week_two_idle_minutes += 1
-        if line_two_current_status == "idle":
+        if line_two_current_status == "idle" or line_two_current_status == "off":
             if time < one_week_in_minutes:
                 week_one_idle_minutes += 1
             else:
@@ -161,6 +185,17 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
     return total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes
 
 def calculate_fitness(production_filtered, material_info, preferred_sequence, porposed_sequence):
+    global min_idle_time
+    global min_total_changeover_time
+    global min_unmet_orders
+    global max_idle_time
+    global max_total_changeover_time
+    global max_unmet_orders
+    
+    global f
+
+    f.writelines("Sequence: " + str(porposed_sequence)+"\n")
+
     total_changeover_time, unmet_binary_map , week_one_idle_minutes, week_two_idle_minutes = simulate_production(production_filtered, material_info, preferred_sequence, porposed_sequence)
     unmet_orders = sum(unmet_binary_map)
     # balance the fitness function between unmet orders and changeover time
@@ -191,13 +226,22 @@ def calculate_fitness(production_filtered, material_info, preferred_sequence, po
         if unmet_orders > max_unmet_orders:
             max_unmet_orders = unmet_orders
     
-    fitness = (total_changeover_time - min_total_changeover_time)/(max_total_changeover_time - min_total_changeover_time) + (unmet_orders - min_unmet_orders)/(max_unmet_orders - min_unmet_orders) + (idle_time - min_idle_time)/(max_idle_time - min_idle_time)
-    return fitness
+    try:
+        fitness = (total_changeover_time - min_total_changeover_time)/(max_total_changeover_time - min_total_changeover_time) + (unmet_orders - min_unmet_orders)/(max_unmet_orders - min_unmet_orders)# + (idle_time - min_idle_time)/(max_idle_time - min_idle_time)
+        fitness = 1/fitness
+        # add a line to f to write the fitness value with detailed elements
+        f.writelines(str(fitness) + ',' + str(total_changeover_time) + ',' + str(unmet_orders) + ',' + str(idle_time) + '\n')
+        return fitness
+    except:
+        print("Error in calculate_fitness function")
+        return 0
 
 def generate_random_sequence(production_filtered):
     # generate a random sequence of orders for different lines then concat lists
-    line_one_sequence = production_filtered[production_filtered['machine_number'] == 'P10']["Order"].tolist()
-    line_two_sequence = production_filtered[production_filtered['machine_number'] == 'P20']["Order"].tolist()
+    
+    line_one_sequence = production_filtered[production_filtered['machine_number'] == 'P10'].index.tolist()
+    line_two_sequence = production_filtered[production_filtered['machine_number'] == 'P20'].index.tolist()
+    
     random.shuffle(line_one_sequence)
     random.shuffle(line_two_sequence)
     porposed_sequence = line_one_sequence + line_two_sequence
@@ -215,9 +259,12 @@ def generate_random_population(production_filtered, population_size):
     return population
 
 def generate_next_generation(production_filtered, material_info, preferred_sequence, population, population_size, mutation_rate):
+    print("Generating next generation...")
     fitness_map = {}
     for porposed_sequence in population:
         fitness_map[tuple(porposed_sequence)] = calculate_fitness(production_filtered, material_info, preferred_sequence, porposed_sequence)
+    for k,v in fitness_map.items():
+        print(len(k))
     sorted_fitness_map = sorted(fitness_map.items(), key=lambda x: x[1])
     sorted_population = [list(x[0]) for x in sorted_fitness_map]
     next_generation = sorted_population[:int(population_size*0.2)]
@@ -237,6 +284,9 @@ def crossover(parent1, parent2, production_filtered, material_info, preferred_se
             child.append(parent1[i])
         else:
             child.append(parent2[i])
+    
+    child = list(set(child)) # make it unique
+
     production_filtered_orders = production_filtered.index.values.tolist()#production_filtered["Order"].tolist()
     missing_elements = [element for element in production_filtered_orders if element not in child] 
     for element in missing_elements:
@@ -258,12 +308,18 @@ def mutate(child):
     return child
 
 def genetic_algorithm(production_filtered, material_info, preferred_sequence, population_size, mutation_rate, generations):
+    f.writelines("Starting genetic algorithm with population size: " + str(population_size) + " mutation rate: " + str(mutation_rate) + " generations: " + str(generations)+"\n")
+
     population = generate_random_population(production_filtered, population_size)
     for i in range(generations):
+        f.writelines("Generation: " + str(i) + "\n")
         population = generate_next_generation(production_filtered, material_info, preferred_sequence, population, population_size, mutation_rate)
+    f.writelines("Finished genetic algorithm with population size: " + str(population_size) + " mutation rate: " + str(mutation_rate) + " generations: " + str(generations)+"\n")
     fitness_map = {}
     for porposed_sequence in population:
+        f.writelines("\n*****************************\n"+str(porposed_sequence) + "\n")
         fitness_map[tuple(porposed_sequence)] = calculate_fitness(production_filtered, material_info, preferred_sequence, porposed_sequence)
+        f.writelines("fitness: " + str(fitness_map[tuple(porposed_sequence)]) + "\n")
     sorted_fitness_map = sorted(fitness_map.items(), key=lambda x: x[1])
     sorted_population = [list(x[0]) for x in sorted_fitness_map]
     best_sequence = sorted_population[0]
@@ -286,26 +342,39 @@ def get_nth_two_weeks_production(production,n): # n starts from 0
     return production_filtered
 
 def fill_the_pool(pool_size,production_filtered,material_info, preferred_sequence):
+    global f
+
     for i in range(pool_size):
+        f.writelines("Pool size: " + str(i+1)+"\n")
         temp_seq = generate_random_sequence(production_filtered)
         temp_fitness = calculate_fitness(production_filtered, material_info, preferred_sequence, temp_seq)
+        f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time)+"\n")
 def main():
 
     production, material_info = generate_material_and_jobs()
     # production_filtered = get_nth_two_weeks_production(production, 1)
     production_filtered = production[production["year"]==2021]
     production_filtered = production_filtered[(production_filtered["week"]==40) | (production_filtered["week"]==41)]
-    preferred_sequence = generate_cleaning_times()
+    production_filtered = production_filtered[production_filtered['machine_number'] != 'P30']
+    production_filtered.set_index('Order', inplace=True)
     
+    preferred_sequence = generate_cleaning_times()
+
+    print("Production size:", len(production_filtered))
     pool_size = 100
     population_size = 100
     mutation_rate = 0.1
     generations = 100
-
+    f.writelines("before fill the pool"+"\n")
+    f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time))
     fill_the_pool(pool_size,production_filtered,material_info, preferred_sequence)
+    f.writelines("after fill the pool"+"\n")
+    f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time)+"\n")
     # print(production_filtered[production_filtered['Order']==3827828])
     best_sequence = genetic_algorithm(production_filtered, material_info, preferred_sequence, population_size, mutation_rate, generations)
-    # print(best_sequence)
+    f.writelines("best sequence: " + str(best_sequence)+"\n")
+    print(best_sequence)
+    f.close()
     # print(material_info)
     # print(production_filtered[['Order', 'Material Number', 'machine_number','start_date', 'year', 'week' ,'starthour','endhour']].head(50))
     # print(production.columns)
