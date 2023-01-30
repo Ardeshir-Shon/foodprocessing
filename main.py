@@ -135,7 +135,7 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
                 line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info, production_filtered)
                 line_two_current_status, line_two_current_order, line_two_order_pointer , line_two_operation_remaining_time = update_line_status(preferred_sequence , line_two_sequence, line_two_order_pointer, line_two_current_status, line_two_current_order, line_two_operation_remaining_time , material_info, production_filtered)
         
-        if shift == 'night':
+        if shift == 'night': # fix idle time in night shift
                 if line_one_current_status == "off":
                     line_one_current_status = save_line_one_status
                 if line_two_current_status == "off":
@@ -144,8 +144,10 @@ def simulate_production(production_filtered, material_info, preferred_sequence, 
                 if line_one_current_order == None:
                     line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info, production_filtered)
                 elif line_two_current_order == None or porposed_sequence.index(line_one_current_order) > porposed_sequence.index(line_two_current_order):
+                    week_one_idle_minutes += 1
                     line_two_current_status, line_two_current_order, line_two_order_pointer , line_two_operation_remaining_time = update_line_status(preferred_sequence , line_two_sequence, line_two_order_pointer, line_two_current_status, line_two_current_order, line_two_operation_remaining_time , material_info, production_filtered)
                 else:
+                    week_two_idle_minutes += 1
                     line_one_current_status, line_one_current_order, line_one_order_pointer , line_one_operation_remaining_time = update_line_status(preferred_sequence , line_one_sequence, line_one_order_pointer, line_one_current_status, line_one_current_order, line_one_operation_remaining_time , material_info, production_filtered)
                 # check may reach first if and last else
         if shift == 'off':
