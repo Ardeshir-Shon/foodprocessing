@@ -131,3 +131,5 @@ dmypy.json
 # data directory
 data/*
 data
+*log*
+test.py
