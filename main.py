@@ -2,6 +2,10 @@ from extractor import *
 import random
 import logging
 import os
+from productBatch import *
+from order import *
+import copy
+import time
 
 # TODO: make line an object and have number of lines and variables dynamic
 # TODO: make the changeover time dynamic
@@ -73,7 +77,8 @@ def update_line_status(preferred_sequence ,line_sequence, line_order_pointer, li
             if line_operation_remaining_time == 0:
                 line_current_status = "changeover"
                 next_order = line_sequence[line_order_pointer+1]
-                line_operation_remaining_time = get_changeovertime(preferred_sequence, production_filtered.loc[line_current_order]["Material Number"], production_filtered.loc[next_order]["Material Number"])
+                line_operation_remaining_time = get_cleaning_times(production_filtered.loc[line_current_order]["Material Number"], production_filtered.loc[next_order]["Material Number"])
+                # line_operation_remaining_time = get_changeovertime(preferred_sequence, production_filtered.loc[line_current_order]["Material Number"], production_filtered.loc[next_order]["Material Number"])
                 return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
             else:
                 return line_current_status, line_current_order, line_order_pointer, line_operation_remaining_time
@@ -351,36 +356,306 @@ def fill_the_pool(pool_size,production_filtered,material_info, preferred_sequenc
         temp_seq = generate_random_sequence(production_filtered)
         temp_fitness = calculate_fitness(production_filtered, material_info, preferred_sequence, temp_seq)
         f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time)+"\n")
+
+def get_priority_score(preferred_sequence,material):
+    try:
+        return preferred_sequence[material]
+    except:
+        return 135 # the last priority
+
+def compute_total_time(material_info, porposed_batch_sequence):
+    total_time = 0
+    changeovers = 0
+    before = None
+    for material,qty in porposed_batch_sequence.items():
+        total_time += material_info[material]*qty
+        self_changeover_time = get_cleaning_times(material, material)
+        total_time += self_changeover_time*(qty-1)
+        changeovers += self_changeover_time*(qty-1)
+        if before is not None:
+            temp_cleaning_time = get_cleaning_times(before, material)
+            total_time += temp_cleaning_time
+            changeovers += temp_cleaning_time
+        before = material
+    return total_time, changeovers
+
+def feasibility_checking(machine_times):
+    # night shift : from 15:40 to 00:45
+    night_shift_in_min = 10*60 + 5
+    # day shift : 7:40 - 15:00
+    day_shift_in_min = 7*60 + 20
+    
+    # checking the schedule feasibility
+    shift_occupation = []
+    for i in range(10):
+        if i%2 == 0: # day shift
+            if machine_times[0]>0 and machine_times[1]>0:
+                shift_occupation.append([0,1])
+                machine_times[0] -= day_shift_in_min
+                machine_times[1] -= day_shift_in_min
+            elif machine_times[0]>0 and machine_times[2]>0:
+                shift_occupation.append([0,2])
+                machine_times[0] -= day_shift_in_min
+                machine_times[2] -= day_shift_in_min
+            elif machine_times[1]>0 and machine_times[2]>0:
+                shift_occupation.append([1,2])
+                machine_times[1] -= day_shift_in_min
+                machine_times[2] -= day_shift_in_min
+            elif machine_times[0]>0:
+                shift_occupation.append([0])
+                machine_times[0] -= day_shift_in_min
+            elif machine_times[1]>0:
+                shift_occupation.append([1])
+                machine_times[1] -= day_shift_in_min
+            elif machine_times[2]>0:
+                shift_occupation.append([2])
+                machine_times[2] -= day_shift_in_min
+            else:
+                shift_occupation.append([])
+        else: # night shift
+            if machine_times[0]>0:
+                shift_occupation.append([0])
+                machine_times[0] -= night_shift_in_min
+            elif machine_times[1]>0:
+                shift_occupation.append([1])
+                machine_times[1] -= night_shift_in_min
+            elif machine_times[2]>0:
+                shift_occupation.append([2])
+                machine_times[2] -= night_shift_in_min
+            else:
+                shift_occupation.append([])
+    
+    if machine_times[0]>0 or machine_times[1]>0 or machine_times[2]>0: # we have unmet orders
+        return False, shift_occupation
+    return True, shift_occupation
+        
+
+def get_machine_times(week_target, material_info, batches_total):
+    machine_times = []
+    machine_changeovers = []
+    for machine in ['P10','P20','P30']:
+        total_times,changeovers = compute_total_time(material_info,batches_total[week_target][machine])
+        machine_times.append(total_times)
+        machine_changeovers.append(changeovers)
+    return machine_times, machine_changeovers
+
+def greedy_algorithm(production_filtered, material_info,preferred_sequence):
+    global f
+
+    f.writelines("Starting greedy algorithm\n")
+
+    total_poduction = {0:{'P10':[],'P20':[],'P30':[]},1:{'P10':[],'P20':[],'P30':[]},2:{'P10':[],'P20':[],'P30':[]}} # 0 for week 1, 1 for week 2, 2 for week 3
+    total_batches = {0:{'P10':{},'P20':{},'P30':{}},1:{'P10':{},'P20':{},'P30':{}},2:{'P10':{},'P20':{},'P30':{}}} # 0 for week 1, 1 for week 2, 2 for week 3
+    weeks = list(production_filtered["week"].unique())
+    weeks.sort()
+
+    for order in production_filtered.index.values.tolist():
+        if production_filtered.loc[order]['machine_number'] ==  'P10':
+            material_number = production_filtered.loc[order]['Material Number']
+            temp_order = Order(order, material_number, production_filtered.loc[order]['machine_number'], weeks.index(production_filtered.loc[order]['week']), material_info[material_number],get_priority_score(preferred_sequence,material_number))
+            total_poduction[weeks.index(production_filtered.loc[order]['week'])]['P10'].append(temp_order)
+            if material_number in total_batches[weeks.index(production_filtered.loc[order]['week'])]['P10']:
+                total_batches[weeks.index(production_filtered.loc[order]['week'])]['P10'][material_number] += 1
+            else:
+                total_batches[weeks.index(production_filtered.loc[order]['week'])]['P10'][material_number] = 1
+        elif production_filtered.loc[order]['machine_number'] ==  'P20':
+            material_number = production_filtered.loc[order]['Material Number']
+            temp_order = Order(order, material_number, production_filtered.loc[order]['machine_number'], weeks.index(production_filtered.loc[order]['week']), material_info[material_number],get_priority_score(preferred_sequence,material_number))
+            total_poduction[weeks.index(production_filtered.loc[order]['week'])]['P20'].append(temp_order)
+            if material_number in total_batches[weeks.index(production_filtered.loc[order]['week'])]['P20']:
+                total_batches[weeks.index(production_filtered.loc[order]['week'])]['P20'][material_number] += 1
+            else:
+                total_batches[weeks.index(production_filtered.loc[order]['week'])]['P20'][material_number] = 1
+        elif production_filtered.loc[order]['machine_number'] ==  'P30':
+            material_number = production_filtered.loc[order]['Material Number']
+            temp_order = Order(order, material_number, production_filtered.loc[order]['machine_number'], weeks.index(production_filtered.loc[order]['week']), material_info[material_number],get_priority_score(preferred_sequence,material_number))
+            total_poduction[weeks.index(production_filtered.loc[order]['week'])]['P30'].append(temp_order)
+            if material_number in total_batches[weeks.index(production_filtered.loc[order]['week'])]['P30']:
+                total_batches[weeks.index(production_filtered.loc[order]['week'])]['P30'][material_number] += 1
+            else:
+                total_batches[weeks.index(production_filtered.loc[order]['week'])]['P30'][material_number] = 1
+    
+    # sort the orders in each machine in each week based on the priority score
+    for week in total_poduction:
+        for machine in total_poduction[week]:
+            temp = total_poduction[week][machine]
+            total_poduction[week][machine] = sorted(temp, key=lambda x: x.get_priority_score(), reverse=False)
+    
+    # show the sorted orders
+    for week in total_poduction:
+        f.writelines("Week: " + str(week+1) + "\n")
+        for machine in total_poduction[week]:
+            f.writelines(machine + "\n")
+            for order in total_poduction[week][machine]:
+                f.writelines(str(order) + "\n")
+
+    # sort the total batches by priority score
+    for week in total_batches:
+        for machine in total_batches[week]:
+            temp = total_batches[week][machine]
+            total_batches[week][machine] = dict(sorted(temp.items(), key=lambda x: get_priority_score(preferred_sequence,x[0]), reverse=False))
+
+
+    # start the greedy algorithm
+    batches_total_copy = copy.deepcopy(total_batches)
+    
+    machine_times,_ = get_machine_times(0, material_info,batches_total_copy)
+    feasibility,shift_occupations = feasibility_checking(machine_times)
+    
+    if not feasibility:
+        print("Not feasible")
+        f.writelines("Not feasible528")
+        f.close()
+        exit()
+    # squeeze phase
+    for week_target in range(2):
+        last_stable_total_batches = copy.deepcopy(batches_total_copy)
+        notIncluded = False
+        while len(last_stable_total_batches[week_target+1]['P10'])>0 or len(last_stable_total_batches[week_target+1]['P20'])>0: # while there are still orders to be squeezed
+            machine_times,_ = get_machine_times(week_target, material_info,batches_total_copy)
+            feasibility,shift_occupations = feasibility_checking(machine_times)
+            
+            if not feasibility:
+                batches_total_copy = copy.deepcopy(last_stable_total_batches)
+                if notIncluded:
+                    break
+                notIncluded = True # give another chance to include others not included in the target week
+                continue
+            
+            last_stable_total_batches = copy.deepcopy(batches_total_copy)
+            # find candidate btches to merge/add
+            next_week_batches = batches_total_copy[week_target+1].copy()
+            # find min value in dict
+            min_key1 = None
+            min_value1 = 1000000000000
+            for material,qty in next_week_batches['P10'].items():
+                if material in batches_total_copy[week_target]['P10'] or notIncluded:
+                    if qty < min_value1:
+                        min_value1 = qty
+                        min_key1 = material
+            min_key2 = None
+            min_value2 = 1000000000000
+            for material,qty in next_week_batches['P20'].items():
+                if material in batches_total_copy[week_target]['P20'] or notIncluded:
+                    if qty < min_value2:
+                        min_value2 = qty
+                        min_key2 = material
+            #merging phase
+            if min_key1 is None and min_key2 is None:
+                notIncluded = True # no preference to have materials in current week
+            elif min_key1 is None:
+                if min_key2 in batches_total_copy[week_target]['P20']: 
+                    batches_total_copy[week_target]['P20'][min_key2] += min_value2
+                else:
+                    batches_total_copy[week_target]['P20'][min_key2] = min_value2
+                del batches_total_copy[week_target+1]['P20'][min_key2]
+            elif min_key2 is None:
+                if min_key1 in batches_total_copy[week_target]['P10']:
+                    batches_total_copy[week_target]['P10'][min_key1] += min_value1
+                else:
+                    batches_total_copy[week_target]['P10'][min_key1] = min_value1
+                del batches_total_copy[week_target+1]['P10'][min_key1]
+            elif min_value1 <= min_value2:
+                if min_key1 in batches_total_copy[week_target]['P10']:
+                    batches_total_copy[week_target]['P10'][min_key1] += min_value1
+                else:
+                    batches_total_copy[week_target]['P10'][min_key1] = min_value1
+                del batches_total_copy[week_target+1]['P10'][min_key1]
+            else:
+                if min_key2 in batches_total_copy[week_target]['P20']:
+                    batches_total_copy[week_target]['P20'][min_key2] += min_value2
+                else:
+                    batches_total_copy[week_target]['P20'][min_key2] = min_value2
+                del batches_total_copy[week_target+1]['P20'][min_key2]
+
+            # sort the total batches by priority score
+            for week in batches_total_copy:
+                for machine in batches_total_copy[week]:
+                    temp = batches_total_copy[week][machine]
+                    batches_total_copy[week][machine] = dict(sorted(temp.items(), key=lambda x: get_priority_score(preferred_sequence,x[0]), reverse=False))
+
+    sequence_information = {}
+    for week in range(3):
+        machine_times,changeovers = get_machine_times(week, material_info,batches_total_copy)
+        machine_times_copy = copy.deepcopy(machine_times) # feasibility modifies it we need to keep the original
+        feasibility,shift_occupations = feasibility_checking(machine_times)
+        sequence_information[week] = {}
+        sequence_information[week]['feasibility'] = feasibility
+        sequence_information[week]['shift_occupations'] = shift_occupations
+        sequence_information[week]['batches'] = batches_total_copy[week]
+        sequence_information[week]['machine_times'] = machine_times_copy
+        sequence_information[week]['changeovers'] = changeovers
+    return sequence_information
+def log_greedy_output(sequence_information):
+
+    global f
+
+    for week in sequence_information:
+        f.writelines("Week: " + str(week+1) + "\n")
+        f.writelines("Feasibility: " + str(sequence_information[week]['feasibility']) + "\n")
+        f.writelines("Shift occupations: " + str(sequence_information[week]['shift_occupations']) + "\n")
+        f.writelines("Batches: " + str(sequence_information[week]['batches']) + "\n")
+        f.writelines("Machine times: " + str(sequence_information[week]['machine_times']) + "\n")
+        f.writelines("Changeovers: " + str(sequence_information[week]['changeovers']) + "\n")
+
 def main():
+    methods = ["genetic", "greedy"]
+    method = methods[0]
 
     production, material_info = generate_material_and_jobs()
-    # production_filtered = get_nth_two_weeks_production(production, 1)
-    production_filtered = production[production["year"]==2021]
-    production_filtered = production_filtered[(production_filtered["week"]==40) | (production_filtered["week"]==41)]
-    production_filtered = production_filtered[production_filtered['machine_number'] != 'P30']
-    production_filtered.set_index('Order', inplace=True)
-    
-    preferred_sequence = generate_cleaning_times()
 
-    print("Production size:", len(production_filtered))
-    pool_size = 100
-    population_size = 100
-    mutation_rate = 0.1
-    generations = 100
-    f.writelines("before fill the pool"+"\n")
-    f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time))
-    fill_the_pool(pool_size,production_filtered,material_info, preferred_sequence)
-    f.writelines("after fill the pool"+"\n")
-    f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time)+"\n")
-    # print(production_filtered[production_filtered['Order']==3827828])
-    best_sequence = genetic_algorithm(production_filtered, material_info, preferred_sequence, population_size, mutation_rate, generations)
-    f.writelines("best sequence: " + str(best_sequence)+"\n")
-    print(best_sequence)
+    if method == "greedy":
+        preferred_sequence = generate_cleaning_times()
+        production_filtered = production[production["year"]==2021]
+        production_filtered = production_filtered[(production_filtered["week"]==40) | (production_filtered["week"]==41)]
+        # production_filtered.set_index('Order', inplace=True)
+        best_sequence = greedy_algorithm(production_filtered, material_info)
+        print("Best sequence:", best_sequence)
+        print("Fitness:", calculate_fitness(production_filtered, material_info, preferred_sequence, best_sequence))
+        return
+    if method == "genetic":
+        # production_filtered = get_nth_two_weeks_production(production, 1)
+        production_filtered = production[production["year"]==2021]
+        production_filtered = production_filtered[(production_filtered["week"]==40) | (production_filtered["week"]==41)]
+        production_filtered = production_filtered[production_filtered['machine_number'] != 'P30']
+        production_filtered.set_index('Order', inplace=True)
+        
+        preferred_sequence = generate_cleaning_times()
+
+        print("Production size:", len(production_filtered))
+        pool_size = 100
+        population_size = 100
+        mutation_rate = 0.1
+        generations = 100
+        f.writelines("before fill the pool"+"\n")
+        f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time))
+        fill_the_pool(pool_size,production_filtered,material_info, preferred_sequence)
+        f.writelines("after fill the pool"+"\n")
+        f.writelines("min_unmet: " + str(min_unmet_orders) + " max_unmet: " + str(max_unmet_orders) + " min_idle: " + str(min_idle_time) + " max_idle: " + str(max_idle_time) + " min_changeover: " + str(min_total_changeover_time) + " max_changeover: " + str(max_total_changeover_time)+"\n")
+        # print(production_filtered[production_filtered['Order']==3827828])
+        best_sequence = genetic_algorithm(production_filtered, material_info, preferred_sequence, population_size, mutation_rate, generations)
+        f.writelines("best sequence: " + str(best_sequence)+"\n")
+        print(best_sequence)
+        f.close()
+        print(material_info)
+        print(production_filtered[['Order', 'Material Number', 'machine_number','start_date', 'year', 'week' ,'starthour','endhour']].head(50))
+        print(production.columns)
+def test():
+    # save execution time of this fucntion till the end
+    start_time = time.time()
+    production, material_info = generate_material_and_jobs()
+    production_filtered = production[production["year"]==2022]
+    production_filtered = production_filtered[(production_filtered["week"]==31) | (production_filtered["week"]==32) | (production_filtered["week"]==33)]
+    # production_filtered = production_filtered[production_filtered['machine_number'] != 'P30']
+    production_filtered.set_index('Order', inplace=True)
+    preferred_sequence = generate_cleaning_times()
+    out = greedy_algorithm(production_filtered, material_info, preferred_sequence)
+    log_greedy_output(out)
+    print("Execution time: %s seconds" % (time.time() - start_time))
+    f.writelines("Execution time: %s seconds" % (time.time() - start_time))
     f.close()
-    # print(material_info)
-    # print(production_filtered[['Order', 'Material Number', 'machine_number','start_date', 'year', 'week' ,'starthour','endhour']].head(50))
-    # print(production.columns)
 
 
 if __name__ == "__main__":
-    main()
+    # main()
+    test()
