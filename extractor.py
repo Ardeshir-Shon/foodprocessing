@@ -1,4 +1,5 @@
 import pandas as pd
+from functools import lru_cache
 
 def generate_material_and_jobs(file_production_name="Actual production.XLSX", 
         file_material_name="Routing Timings.XLSX"):
@@ -48,3 +49,13 @@ def generate_cleaning_times(prefered_time="Their prefered sequence.xlsx"):
     out_cleaning_times = {v: k for k, v in tempDict['Material'].items()}
 
     return out_cleaning_times
+
+@lru_cache(maxsize=None)
+def get_cleaning_times(source,dest):
+    try:
+        cleaning_times = pd.read_excel("data/ModelData.xlsx",skiprows=2)
+        cleaning_times = cleaning_times.drop(cleaning_times.columns[0], axis=1)
+        cleaning_times.set_index("Material", inplace=True)
+        return int(cleaning_times.loc[source,dest])
+    except:
+        return 40
